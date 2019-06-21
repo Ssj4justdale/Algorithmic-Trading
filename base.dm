@@ -19,6 +19,8 @@ algorithm
 
 		_type
 
+		_name
+
 		tmp
 
 			market = CLOSED
@@ -33,7 +35,7 @@ algorithm
 			DISCORD = _DEFAULT_WEBHOOK
 			base_url = "https://finviz.com/screener.ashx?f="
 
-			_rebalanceEveryHour = TRUE
+			_rebalanceEveryHour = FALSE
 
 			_ticker = 0
 
@@ -49,6 +51,9 @@ algorithm
 						_shareQTY--
 					if(_shareQTY <=0)
 						world.log <<"Not enough money to buy [_equity]"
+						return
+					if(_costPerShare <= 0 || !_costPerShare)
+						world.log <<"Failed to retrieve share price for [_equity]"
 						return
 					if(_equity in securities)
 						if(_dontForce)
@@ -109,7 +114,7 @@ algorithm
 			shell("rm -f data/*")
 			for(var/_equity in securities)
 				if(age[_equity] >= _maxHoldDays) _fireSale(_equity)
-				else age[_equity] += 0
+				else if(!SIMULATE_SAME_DAY) {age[_equity] += 1}
 			_rebalance()
 
 		_rebalance()
@@ -117,8 +122,9 @@ algorithm
 				if(_equity in age)if(age[_equity] == 0)continue
 				var/tmpvar1 = securities[_equity]["average"]
 				var/tmpvar2 = _getStockValue(_equity)
-				if(tmpvar2 >= tmpvar1 + PERCENT(tmpvar1,1)) _fireSale(_equity)
+				if(tmpvar2 > tmpvar1) _fireSale(_equity)
 			_myPlay()
+			_updateProgress()
 
 		_getShares()
 			. = args[1]
@@ -147,10 +153,10 @@ algorithm
 		_updatePortfolioDiscord()
 
 
-		_log()
-			world.log << args[1];shell("curl -H \"Content-Type: application/json\" -X POST -d '{\"username\": \"[DISCORD_BOTNAME]\", \"content\": \"[args[1]]\"}' [DISCORD]")
+		_log(_x, DISCORD_S = DISCORD)
+			world.log << args[1];shell("curl -H \"Content-Type: application/json\" -X POST -d '{\"username\": \"[_name]\", \"content\": \"[args[1]]\"}' [DISCORD_S]")
 		_logBOT()
-			world.log << args[1];shell("curl -H \"Content-Type: application/json\" -X POST -d '{\"username\": \"[DISCORD_BOTNAME]\", \"content\": \"[args[1]]\"}' [_DEFAULT_WEBHOOK]")
+			world.log << args[1];shell("curl -H \"Content-Type: application/json\" -X POST -d '{\"username\": \"[_name]\", \"content\": \"[args[1]]\"}' [_DEFAULT_WEBHOOK]")
 
 		_randomShares()
 			. = rand(_sharesMin,_sharesMax)
@@ -165,8 +171,8 @@ algorithm
 		_load()
 			_type = args[1]
 			switch(_type)
-				if(BOT_EARNINGS).=_EARNINGSPLAY_WEBHOOK
-				if(BOT_BREAKOUT).=_POTENTIALBREAKOUTS_WEBHOOK
+				if(BOT_EARNINGS){.=_EARNINGSPLAY_WEBHOOK; _name = "ALGORITHMIC EARNINGS BOT";}
+				if(BOT_BREAKOUT){.=_POTENTIALBREAKOUTS_WEBHOOK; _name = "ALGORITHMIC BREAKOUTS BOT";}
 			DISCORD = .
 			if(fexists("saves/[_type]"))
 				var/savefile/_save = new("saves/[_type]")
@@ -191,6 +197,15 @@ algorithm
 			.=null
 			. = _createData(base_url+args[1])
 			.=_getInstances(_dataFile2Text(.),{"<td height="10" align="right" class="screener-body-table-nw"><a href="quote.ashx?t="},"&","</tr>")
+
+		_updateProgress()
+			portfolio_value = _portfolioValue(); . = percent_change(open_value, portfolio_value)
+			_log("$[portfolio_value] ([. > 0 ? "+" : ""][.]%)", _DISCORDBOTUPDATES_WEBHOOK)
+			var/cur_val			
+			for(var/_equity in securities)
+				cur_val = _getStockValue(_equity)
+				. = percent_change(securities[_equity]["average"], cur_val)
+				_log("*Holding [securities[_equity]["shares"]] shares of $[_equity] @ an average of [securities[_equity]["average"]]/share -- Current Value: [cur_val]([. > 0 ? "+" : ""][.]%)*",_DISCORDBOTUPDATES_WEBHOOK)
 
 
 
@@ -240,11 +255,11 @@ algorithm
 							else {if(hh >= 6 && mm >= 30 && hh < 13 || hh >= 7 && hh < 13){market = OPEN;_logBOT("[DATE_TIME] - Algorithmic [_type] Bot [VERSION] Signing On -- Portfolio Value: $[_portfolioValue()]");_newDay()}}
 						if(OPEN)
 							//hh = text2num(hh);mm=text2num(mm)
-							if(hh >= 13 || hh >= 1 && hh < 6 || hh == 6 && mm < 30) {market = CLOSED; portfolio_value = _portfolioValue(); . = percent_change(open_value, portfolio_value); _logBOT("[DATE_TIME] - Algorithmic [_type] Bot [VERSION] Signing Off -- Portfolio Value: $[portfolio_value] ([. > 0 ? "+" : "-"][.]%)");}
+							if(hh >= 13 || hh >= 1 && hh < 6 || hh == 6 && mm < 30) {market = CLOSED; portfolio_value = _portfolioValue(); . = percent_change(open_value, portfolio_value); _logBOT("[DATE_TIME] - Algorithmic [_type] Bot [VERSION] Signing Off -- Portfolio Value: $[portfolio_value] ([. > 0 ? "+" : ""][.]%)");}
 
 					sleep(600)
 					if(_rebalanceEveryHour)
-						if(mm == 0 || !m || DATE_MINUTE == "00")
+						if(mm == 0 || !mm || DATE_MINUTE == "00")
 							_rebalance();_ticker=0
 					else
 						if((!_rebalanceEveryHour && _ticker >= _rebalance_waitTime) && market == OPEN)
